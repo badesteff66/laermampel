@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lärmampel">
+<meta name="theme-color" content="#14181f">
+<title>Lärmampel</title>
+<style>
+/*
+VOICE: ruhig, klar, aus drei Metern Entfernung lesbar
+IDEA: eine Schul-Ampel, die gleichzeitig als Messgerät dient
+PICTURE: großer, farbiger Pegelbogen mit der aktuellen Zahl; darunter der Höchstwert
+COLOUR and TYPE: dunkler Grund, Ampelgrün, -gelb und -rot; Atkinson Hyperlegible
+LAYOUT: Querformat mit Bogen links und Höchstwert rechts; Hochformat untereinander
+*/
+:root{--bg:#14181f;--panel:#1d232d;--ink:#f3f5f7;--mute:#9aa4b2;--ok:#3ecf6e;--warn:#ffc83d;--bad:#ff4d4d;--lvl:var(--ok)}
+*{box-sizing:border-box;min-width:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.4 "Atkinson Hyperlegible",-apple-system,system-ui,sans-serif;
+  padding:max(16px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+  display:flex;flex-direction:column;gap:16px;overflow:hidden;user-select:none;-webkit-user-select:none}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:22px;font-weight:700}
+.status{color:var(--mute);font-size:15px}
+main{flex:1;display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:20px;min-height:0}
+.card{background:var(--panel);border-radius:28px;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;min-height:0}
+.gauge{width:100%;max-width:640px;aspect-ratio:2/1.15;position:relative}
+.gauge svg{width:100%;height:100%;display:block}
+.now{position:absolute;left:0;right:0;bottom:4%;text-align:center}
+.now b{display:block;font-size:clamp(64px,13vw,150px);line-height:1;font-variant-numeric:tabular-nums;color:var(--lvl);transition:color .3s}
+.now span{color:var(--mute);font-size:18px}
+.peak{gap:6px;text-align:center}
+.peak small{font-size:20px;color:var(--mute)}
+.peak b{font-size:clamp(80px,14vw,170px);line-height:1;font-variant-numeric:tabular-nums}
+.peak .when{color:var(--mute);font-size:16px;min-height:1.4em}
+.hist{list-style:none;margin:14px 0 0;padding:0;color:var(--mute);font-size:15px;display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;max-width:100%}
+.hist b{font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}
+.histhead{margin-top:16px;font-size:14px;color:var(--mute)}
+.row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:18px}
+button{font:inherit;font-size:18px;font-weight:700;min-height:52px;padding:0 24px;border-radius:16px;border:0;background:#2c3542;color:var(--ink);cursor:pointer}
+button.primary{background:var(--ok);color:#0b1a10}
+button:focus-visible{outline:3px solid var(--warn);outline-offset:3px}
+footer{display:flex;gap:24px;flex-wrap:wrap;align-items:center;justify-content:center;color:var(--mute);font-size:15px}
+footer label{display:flex;align-items:center;gap:10px}
+input[type=range]{width:180px;accent-color:var(--warn)}
+footer output{color:var(--ink);font-variant-numeric:tabular-nums;min-width:4.5em;display:inline-block}
+.overlay{position:fixed;inset:0;background:rgba(10,12,16,.92);display:flex;align-items:center;justify-content:center;padding:24px;z-index:5}
+.overlay .box{max-width:520px;text-align:center}
+.overlay h2{font-size:34px;margin:0 0 12px;line-height:1.1}
+.overlay p{color:var(--mute);margin:0 0 24px}
+.overlay .err{color:var(--bad)}
+.hidden{display:none!important}
+body.alarm .card:first-child{box-shadow:0 0 0 6px var(--bad) inset}
+@media (orientation:portrait),(max-width:760px){main{grid-template-columns:1fr;grid-template-rows:minmax(0,1.3fr) minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lärmampel</h1>
+  <div class="status" id="status">Bereit</div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="gauge">
+      <svg viewBox="0 0 200 115" aria-hidden="true">
+        <path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="#2c3542" stroke-width="16" stroke-linecap="round"/>
+        <path id="arc" d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="var(--lvl)" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
+        <line id="limitMark" x1="0" y1="0" x2="0" y2="0" stroke="var(--bad)" stroke-width="3" stroke-linecap="round"/>
+        <line id="peakMark" x1="0" y1="0" x2="0" y2="0" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <div class="now"><b id="now">–</b><span>dB jetzt</span></div>
+    </div>
+  </section>
+
+  <section class="card peak">
+    <small>Höchstwert</small>
+    <b id="peak">–</b>
+    <div class="when" id="when"></div>
+    <div class="row">
+      <button id="reset">Zurücksetzen</button>
+      <button id="pause">Pause</button>
+    </div>
+    <div class="histhead" id="histhead"></div>
+    <ul class="hist" id="hist"></ul>
+  </section>
+</main>
+
+<footer>
+  <label>Grenzwert <input type="range" id="limit" min="40" max="100" step="1" value="70"><output id="limitOut">70 dB</output></label>
+  <label>Kalibrierung <input type="range" id="cal" min="70" max="130" step="1" value="100"><output id="calOut">+100</output></label>
+</footer>
+
+<div class="overlay" id="overlay">
+  <div class="box">
+    <h2>Lautstärke messen</h2>
+    <p id="intro">Tippe auf Start und erlaube den Mikrofonzugriff. Die App zeigt die aktuelle Lautstärke und merkt sich den höchsten Wert.</p>
+    <button class="primary" id="start">Start</button>
+  </div>
+</div>
+
+<script>
+{
+const $ = id => document.getElementById(id);
+const MIN = 30, MAX = 110;               // Anzeigebereich der Skala in dB
+let ctx, analyser, buf, stream, raf, wakeLock;
+let level = MIN, peak = null, peakTime = null, running = false;
+let limit = 70, cal = 100;
+
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : +v; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, v); }catch(e){} },
+  json(k, d){ try{ return JSON.parse(localStorage.getItem(k)) || d; }catch(e){ return d; } },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+// Gespeicherten Höchstwert wiederherstellen (bleibt auch nach Schließen der App erhalten)
+{ const p = store.get('peak', null), t = store.get('peakTime', null);
+  if (p !== null && t !== null){ peak = p; peakTime = new Date(t); } }
+let history = store.json('history', []);
+let lastSave = 0;
+function savePeak(){ store.set('peak', peak.toFixed(1)); store.set('peakTime', peakTime.getTime()); }
+function fmt(d){ const t = new Date(d); return t.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) + ' ' + t.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); }
+function renderHistory(){
+  $('histhead').textContent = history.length ? 'Frühere Höchstwerte' : '';
+  $('hist').innerHTML = history.map(h => '<li><b>' + Math.round(h.v) + ' dB</b> · ' + fmt(h.t) + '</li>').join('');
+}
+renderHistory();
+limit = store.get('limit', 70); cal = store.get('cal', 100);
+$('limit').value = limit; $('cal').value = cal;
+
+// Punkt auf dem Halbkreis für einen dB-Wert
+function pt(db, r){
+  const f = Math.min(1, Math.max(0, (db - MIN) / (MAX - MIN)));
+  const a = Math.PI * (1 - f);
+  return [100 + r * Math.cos(a), 100 - r * Math.sin(a)];
+}
+function mark(el, db){
+  const [x1,y1] = pt(db, 68), [x2,y2] = pt(db, 92);
+  el.setAttribute('x1',x1); el.setAttribute('y1',y1); el.setAttribute('x2',x2); el.setAttribute('y2',y2);
+}
+function colorFor(db){
+  if (db >= limit) return 'var(--bad)';
+  if (db >= limit - 8) return 'var(--warn)';
+  return 'var(--ok)';
+}
+function updateSettings(){
+  $('limitOut').textContent = limit + ' dB';
+  $('calOut').textContent = '+' + cal;
+  mark($('limitMark'), limit);
+}
+updateSettings();
+
+function render(){
+  const shown = Math.round(level);
+  $('now').textContent = running ? shown : '–';
+  const f = Math.min(1, Math.max(0, (level - MIN) / (MAX - MIN))) * 100;
+  $('arc').setAttribute('stroke-dasharray', f.toFixed(1) + ' 100');
+  document.documentElement.style.setProperty('--lvl', colorFor(level));
+  document.body.classList.toggle('alarm', running && level >= limit);
+  if (peak !== null){
+    $('peak').textContent = Math.round(peak);
+    $('peak').style.color = colorFor(peak);
+    $('when').textContent = (peakTime.toDateString() === new Date().toDateString() ? 'heute um ' + peakTime.toLocaleTimeString('de-DE') : 'am ' + fmt(peakTime));
+    mark($('peakMark'), peak);
+    $('peakMark').style.opacity = 1;
+  } else {
+    $('peak').textContent = '–'; $('peak').style.color = '';
+    $('when').textContent = ''; $('peakMark').style.opacity = 0;
+  }
+}
+
+let last = performance.now();
+function loop(now){
+  const dt = (now - last) / 1000; last = now;
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / buf.length);
+  const db = 20 * Math.log10(Math.max(rms, 1e-8)) + cal;
+  // Zeitbewertung "Fast" (125 ms), damit einzelne Klicks nicht als Spitze zählen
+  const k = 1 - Math.exp(-dt / 0.125);
+  level += (db - level) * k;
+  if (level < MIN) level = MIN;
+  if (peak === null || level > peak){ peak = level; peakTime = new Date(); if (now - lastSave > 500){ savePeak(); lastSave = now; } }
+  render();
+  raf = requestAnimationFrame(loop);
+}
+
+async function keepAwake(){
+  try{ if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }catch(e){}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && running) keepAwake();
+});
+
+async function start(){
+  try{
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('insecure');
+    stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    buf = new Float32Array(analyser.fftSize);
+    src.connect(analyser);
+    running = true; last = performance.now();
+    $('overlay').classList.add('hidden');
+    $('status').textContent = 'Misst …';
+    $('pause').textContent = 'Pause';
+    keepAwake();
+    raf = requestAnimationFrame(loop);
+  }catch(e){
+    const p = $('intro'); p.classList.add('err');
+    p.textContent = e.message === 'insecure'
+      ? 'Das Mikrofon funktioniert nur, wenn die Seite über https:// geöffnet wird. Eine lokal geöffnete Datei reicht nicht.'
+      : 'Kein Zugriff auf das Mikrofon. Bitte in den Einstellungen unter Safari › Mikrofon erlauben und neu laden.';
+  }
+}
+function pause(){
+  if (running){
+    running = false; cancelAnimationFrame(raf);
+    stream.getTracks().forEach(t => t.stop()); ctx.close();
+    try{ wakeLock && wakeLock.release(); }catch(e){}
+    level = MIN; render();
+    $('status').textContent = 'Pausiert';
+    $('pause').textContent = 'Weiter';
+  } else start();
+}
+
+$('start').addEventListener('click', start);
+$('pause').addEventListener('click', pause);
+$('reset').addEventListener('click', () => {
+  if (peak !== null){ history.unshift({v: peak, t: peakTime.getTime()}); history = history.slice(0, 8); store.set('history', JSON.stringify(history)); }
+  peak = null; peakTime = null; store.del('peak'); store.del('peakTime'); renderHistory(); render();
+});
+window.addEventListener('pagehide', () => { if (peak !== null) savePeak(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && peak !== null) savePeak(); });
+$('limit').addEventListener('input', e => { limit = +e.target.value; store.set('limit', limit); updateSettings(); render(); });
+$('cal').addEventListener('input', e => { cal = +e.target.value; store.set('cal', cal); updateSettings(); });
+render();
+}
+</script>
+</body>
+</html>
